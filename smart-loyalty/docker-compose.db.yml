@@ -1,0 +1,26 @@
+# Disposable local PostgreSQL for Phase 1B.2 only.
+# Does not touch other Docker Postgres containers/volumes on this machine.
+name: smart-loyalty-1b2
+
+services:
+  db:
+    image: postgres:16-alpine
+    container_name: smart-loyalty-1b2-postgres
+    restart: unless-stopped
+    ports:
+      - "127.0.0.1:54329:5432"
+    environment:
+      POSTGRES_USER: smart_loyalty
+      POSTGRES_PASSWORD: smart_loyalty_dev_only
+      POSTGRES_DB: smart_loyalty_1b2
+    volumes:
+      - smart_loyalty_1b2_pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U smart_loyalty -d smart_loyalty_1b2"]
+      interval: 3s
+      timeout: 5s
+      retries: 20
+
+volumes:
+  smart_loyalty_1b2_pgdata:
+    name: smart_loyalty_1b2_pgdata

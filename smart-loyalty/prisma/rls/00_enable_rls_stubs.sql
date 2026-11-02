@@ -1,0 +1,21 @@
+-- RLS stubs for later phase. DO NOT treat as complete security.
+-- Not applied by Phase 1B.2 migrate deploy.
+
+-- Example only:
+-- ALTER TABLE businesses ENABLE ROW LEVEL SECURITY;
+-- ALTER TABLE business_members ENABLE ROW LEVEL SECURITY;
+-- ALTER TABLE branches ENABLE ROW LEVEL SECURITY;
+-- ALTER TABLE loyalty_programs ENABLE ROW LEVEL SECURITY;
+-- ALTER TABLE customer_programs ENABLE ROW LEVEL SECURITY;
+-- ALTER TABLE stamp_transactions ENABLE ROW LEVEL SECURITY;
+-- ALTER TABLE reward_redemptions ENABLE ROW LEVEL SECURITY;
+-- ALTER TABLE rewards ENABLE ROW LEVEL SECURITY;
+-- ALTER TABLE wallet_passes ENABLE ROW LEVEL SECURITY;
+-- ALTER TABLE member_branch_assignments ENABLE ROW LEVEL SECURITY;
+-- ALTER TABLE subscriptions ENABLE ROW LEVEL SECURITY;
+
+-- Example policy shape (not activated):
+-- CREATE POLICY businesses_tenant_isolation ON businesses
+--   FOR ALL
+--   USING (id::text = current_setting('app.business_id', true))
+--   WITH CHECK (id::text = current_setting('app.business_id', true));

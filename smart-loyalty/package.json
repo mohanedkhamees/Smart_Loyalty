@@ -14,7 +14,11 @@
     "format": "prettier --write .",
     "format:check": "prettier --check .",
     "prisma:validate": "prisma validate",
-    "prisma:generate": "prisma generate"
+    "prisma:generate": "prisma generate",
+    "prisma:migrate:deploy": "prisma migrate deploy",
+    "test:db": "vitest run",
+    "db:up": "docker compose -f docker-compose.db.yml up -d",
+    "db:down": "docker compose -f docker-compose.db.yml down"
   },
   "dependencies": {
     "@prisma/adapter-pg": "7.10.1",
@@ -36,6 +40,8 @@
     "prettier": "^3.9.10",
     "prisma": "7.10.1",
     "tailwindcss": "^4",
-    "typescript": "^5"
+    "tsx": "4.20.5",
+    "typescript": "^5",
+    "vitest": "3.2.4"
   }
 }
