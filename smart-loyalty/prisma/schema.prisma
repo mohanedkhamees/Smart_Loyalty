@@ -1,0 +1,471 @@
+// =============================================================================
+// Smart Loyalty – Prisma schema (Phase 1B.1 draft)
+// Source of truth for entity shapes: docs/03_Database_Design.md
+//
+// Prisma ORM 7: datasource URL is configured in prisma.config.ts (not here).
+//
+// Compound @relation usage: applied where Prisma can express them without
+// reusing business_id across multiple relation field lists on the same model.
+// Remaining composite FKs, CHECKs, and partial uniques: see
+// prisma/SQL_CONSTRAINTS_CHECKLIST.md (custom SQL in a later phase).
+//
+// Unresolved (do not invent): REVERSAL amount/eligibility; cancel-redeem;
+// PAST_DUE grace; subscription_plans.tier enum members; CITEXT vs TEXT.
+// =============================================================================
+
+generator client {
+  provider        = "prisma-client"
+  output          = "../src/generated/prisma"
+  previewFeatures = ["postgresqlExtensions"]
+}
+
+datasource db {
+  provider   = "postgresql"
+  extensions = [citext]
+}
+
+// ---------------------------------------------------------------------------
+// Enums
+// ---------------------------------------------------------------------------
+
+enum UserRole {
+  USER
+  PLATFORM_ADMIN
+}
+
+enum UserStatus {
+  ACTIVE
+  DISABLED
+}
+
+enum BusinessStatus {
+  ACTIVE
+  SUSPENDED
+  CLOSED
+}
+
+enum BusinessMemberRole {
+  OWNER
+  MANAGER
+  EMPLOYEE
+}
+
+enum BranchScope {
+  ALL_BRANCHES
+  SELECTED_BRANCHES
+}
+
+enum BusinessMemberStatus {
+  ACTIVE
+  INVITED
+  DISABLED
+}
+
+enum BranchStatus {
+  ACTIVE
+  INACTIVE
+}
+
+enum LoyaltyProgramStatus {
+  ACTIVE
+  ARCHIVED
+}
+
+enum CustomerStatus {
+  ACTIVE
+  DISABLED
+}
+
+enum CustomerProgramStatus {
+  ACTIVE
+  PAUSED
+}
+
+enum WalletPlatform {
+  SIMULATOR
+  APPLE
+  GOOGLE
+}
+
+enum WalletPassStatus {
+  ACTIVE
+  EXPIRED
+  REVOKED
+  PENDING
+}
+
+enum StampTransactionType {
+  EARN
+  REDEEM
+  ADJUST
+  REVERSAL
+}
+
+enum RewardStatus {
+  ACTIVE
+  ARCHIVED
+}
+
+/// MVP: COMPLETED only. CANCELLED blocked until product decides cancel-redeem.
+enum RewardRedemptionStatus {
+  COMPLETED
+}
+
+enum SubscriptionStatus {
+  TRIALING
+  ACTIVE
+  PAST_DUE
+  CANCELLED
+  EXPIRED
+}
+
+// ---------------------------------------------------------------------------
+// Identity & tenancy
+// ---------------------------------------------------------------------------
+
+model User {
+  id        String     @id @db.Uuid
+  email     String     @unique @db.Citext
+  fullName  String?    @map("full_name")
+  role      UserRole
+  status    UserStatus
+  createdAt DateTime   @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt DateTime   @updatedAt @map("updated_at") @db.Timestamptz(6)
+
+  customer        Customer?
+  businessMembers BusinessMember[]
+
+  @@map("users")
+}
+
+model Business {
+  id             String         @id @default(uuid()) @db.Uuid
+  name           String
+  slug           String         @unique
+  industry       String?
+  logoUrl        String?        @map("logo_url")
+  brandThemeJson Json?          @map("brand_theme_json")
+  status         BusinessStatus
+  archivedAt     DateTime?      @map("archived_at") @db.Timestamptz(6)
+  createdAt      DateTime       @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt      DateTime       @updatedAt @map("updated_at") @db.Timestamptz(6)
+
+  members          BusinessMember[]
+  branches         Branch[]
+  loyaltyPrograms  LoyaltyProgram[]
+  subscription     Subscription?
+
+  @@map("businesses")
+}
+
+model BusinessMember {
+  id          String               @id @default(uuid()) @db.Uuid
+  businessId  String               @map("business_id") @db.Uuid
+  userId      String               @map("user_id") @db.Uuid
+  role        BusinessMemberRole
+  branchScope BranchScope          @map("branch_scope")
+  canRedeem   Boolean              @default(true) @map("can_redeem")
+  status      BusinessMemberStatus
+  createdAt   DateTime             @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt   DateTime             @updatedAt @map("updated_at") @db.Timestamptz(6)
+
+  business              Business                 @relation(fields: [businessId], references: [id])
+  user                  User                     @relation(fields: [userId], references: [id])
+  branchAssignments     MemberBranchAssignment[]
+  stampTransactions     StampTransaction[]       @relation("StampPerformedBy")
+  rewardRedemptions     RewardRedemption[]       @relation("RedemptionRedeemedBy")
+
+  @@unique([businessId, userId])
+  @@unique([id, businessId])
+  @@index([userId])
+  @@index([businessId])
+  @@map("business_members")
+}
+
+model Branch {
+  id         String       @id @default(uuid()) @db.Uuid
+  businessId String       @map("business_id") @db.Uuid
+  name       String
+  address    String?
+  timezone   String
+  status     BranchStatus
+  isAddOn    Boolean      @default(false) @map("is_add_on")
+  archivedAt DateTime?    @map("archived_at") @db.Timestamptz(6)
+  createdAt  DateTime     @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt  DateTime     @updatedAt @map("updated_at") @db.Timestamptz(6)
+
+  business              Business                 @relation(fields: [businessId], references: [id])
+  memberAssignments     MemberBranchAssignment[]
+  stampTransactions     StampTransaction[]       @relation("StampAtBranch")
+  rewardRedemptions     RewardRedemption[]       @relation("RedemptionAtBranch")
+
+  @@unique([businessId, name])
+  @@unique([id, businessId])
+  @@index([businessId])
+  @@map("branches")
+}
+
+/// Composite FKs: see SQL checklist.
+/// Prisma compound: (member_id, business_id) → business_members.
+/// Prisma single-column: branch_id (composite with business_id is SQL-only).
+model MemberBranchAssignment {
+  businessId String   @map("business_id") @db.Uuid
+  memberId   String   @map("member_id") @db.Uuid
+  branchId   String   @map("branch_id") @db.Uuid
+  createdAt  DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+
+  member BusinessMember @relation(fields: [memberId, businessId], references: [id, businessId])
+  branch Branch         @relation(fields: [branchId], references: [id])
+
+  @@id([memberId, branchId])
+  @@index([businessId])
+  @@index([branchId])
+  @@map("member_branch_assignments")
+}
+
+// ---------------------------------------------------------------------------
+// Loyalty program, customers, enrollment, wallet
+// ---------------------------------------------------------------------------
+
+model LoyaltyProgram {
+  id             String               @id @default(uuid()) @db.Uuid
+  businessId     String               @map("business_id") @db.Uuid
+  name           String
+  description    String?
+  stampsRequired Int                  @map("stamps_required")
+  status         LoyaltyProgramStatus
+  cardThemeJson  Json                 @map("card_theme_json")
+  createdAt      DateTime             @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt      DateTime             @updatedAt @map("updated_at") @db.Timestamptz(6)
+
+  business         Business          @relation(fields: [businessId], references: [id])
+  customerPrograms CustomerProgram[]
+  rewards          Reward[]
+
+  @@unique([id, businessId])
+  @@index([businessId])
+  @@map("loyalty_programs")
+  // Partial UNIQUE one ACTIVE per business_id → SQL checklist
+}
+
+model Customer {
+  id        String         @id @default(uuid()) @db.Uuid
+  userId    String         @unique @map("user_id") @db.Uuid
+  email     String         @db.Citext
+  fullName  String?        @map("full_name")
+  phone     String?
+  status    CustomerStatus
+  createdAt DateTime       @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt DateTime       @updatedAt @map("updated_at") @db.Timestamptz(6)
+
+  user     User              @relation(fields: [userId], references: [id])
+  programs CustomerProgram[]
+
+  @@map("customers")
+}
+
+/// Prisma compound: (loyalty_program_id, business_id) → loyalty_programs.
+/// No direct Business @relation (business_id already used by the compound FK).
+model CustomerProgram {
+  id                 String                @id @default(uuid()) @db.Uuid
+  businessId         String                @map("business_id") @db.Uuid
+  customerId         String                @map("customer_id") @db.Uuid
+  loyaltyProgramId   String                @map("loyalty_program_id") @db.Uuid
+  stampBalance       Int                   @default(0) @map("stamp_balance")
+  lifetimeStamps     Int                   @default(0) @map("lifetime_stamps")
+  qrTokenHash        Bytes                 @map("qr_token_hash")
+  qrTokenCiphertext  Bytes?                @map("qr_token_ciphertext")
+  qrLastRotatedAt    DateTime?             @map("qr_last_rotated_at") @db.Timestamptz(6)
+  status             CustomerProgramStatus
+  joinedAt           DateTime              @default(now()) @map("joined_at") @db.Timestamptz(6)
+  updatedAt          DateTime              @updatedAt @map("updated_at") @db.Timestamptz(6)
+  version            Int                   @default(0)
+
+  customer         Customer           @relation(fields: [customerId], references: [id])
+  loyaltyProgram   LoyaltyProgram     @relation(fields: [loyaltyProgramId, businessId], references: [id, businessId])
+  walletPasses     WalletPass[]
+  stampTransactions StampTransaction[]
+  rewardRedemptions RewardRedemption[]
+
+  @@unique([customerId, loyaltyProgramId])
+  @@unique([customerId, businessId])
+  @@unique([qrTokenHash])
+  @@unique([id, businessId])
+  @@index([businessId])
+  @@map("customer_programs")
+}
+
+/// Prisma compound: (customer_program_id, business_id) → customer_programs.
+model WalletPass {
+  id                String           @id @default(uuid()) @db.Uuid
+  businessId        String           @map("business_id") @db.Uuid
+  customerProgramId String           @map("customer_program_id") @db.Uuid
+  platform          WalletPlatform
+  serialNumber      String           @map("serial_number")
+  externalPassId    String?          @map("external_pass_id")
+  status            WalletPassStatus
+  lastSyncedAt      DateTime?        @map("last_synced_at") @db.Timestamptz(6)
+  metadataJson      Json             @map("metadata_json")
+  createdAt         DateTime         @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt         DateTime         @updatedAt @map("updated_at") @db.Timestamptz(6)
+
+  customerProgram CustomerProgram @relation(fields: [customerProgramId, businessId], references: [id, businessId])
+
+  @@unique([platform, serialNumber])
+  @@unique([customerProgramId, platform])
+  @@index([businessId])
+  @@map("wallet_passes")
+}
+
+// ---------------------------------------------------------------------------
+// Ledger, rewards, redemptions
+// ---------------------------------------------------------------------------
+
+/// Prisma compound: (customer_program_id, business_id) → customer_programs.
+/// Single-column (SQL composite later): branch, performed_by_member, optional reward,
+/// optional reversal_of (enrollment-scoped composite FK is SQL-only).
+/// REVERSAL amount / eligibility semantics remain unresolved — schema only.
+model StampTransaction {
+  id                       String               @id @default(uuid()) @db.Uuid
+  businessId               String               @map("business_id") @db.Uuid
+  customerProgramId        String               @map("customer_program_id") @db.Uuid
+  branchId                 String               @map("branch_id") @db.Uuid
+  performedByMemberId      String               @map("performed_by_member_id") @db.Uuid
+  type                     StampTransactionType
+  stampsDelta              Int                  @map("stamps_delta")
+  balanceAfter             Int                  @map("balance_after")
+  reason                   String?
+  rewardId                 String?              @map("reward_id") @db.Uuid
+  reversalOfTransactionId  String?              @map("reversal_of_transaction_id") @db.Uuid
+  idempotencyKey           String               @map("idempotency_key")
+  requestHash              String               @map("request_hash")
+  createdAt                DateTime             @default(now()) @map("created_at") @db.Timestamptz(6)
+
+  customerProgram   CustomerProgram @relation(fields: [customerProgramId, businessId], references: [id, businessId])
+  branch            Branch          @relation("StampAtBranch", fields: [branchId], references: [id])
+  performedByMember BusinessMember  @relation("StampPerformedBy", fields: [performedByMemberId], references: [id])
+  reward            Reward?         @relation(fields: [rewardId], references: [id])
+
+  reversalOf StampTransaction?  @relation("LedgerReversal", fields: [reversalOfTransactionId], references: [id])
+  reversedBy StampTransaction[] @relation("LedgerReversal")
+
+  /// Typed redeem link (compound on RewardRedemption side).
+  rewardRedemption RewardRedemption? @relation("RedeemLedgerLink")
+
+  @@unique([id, businessId])
+  @@unique([id, businessId, type])
+  @@unique([id, businessId, customerProgramId])
+  @@unique([businessId, idempotencyKey])
+  @@index([businessId, createdAt(sort: Desc)])
+  @@index([customerProgramId, createdAt(sort: Desc)])
+  @@index([branchId, createdAt(sort: Desc)])
+  @@index([performedByMemberId, createdAt(sort: Desc)])
+  @@index([type, createdAt(sort: Desc)])
+  @@index([reversalOfTransactionId])
+  @@map("stamp_transactions")
+  // Partial UNIQUE (reversal_of_transaction_id) WHERE type = REVERSAL → SQL
+  // CHECKs for type/reward_id/reversal/reason/balance → SQL
+}
+
+/// Prisma compound: (loyalty_program_id, business_id) → loyalty_programs.
+model Reward {
+  id               String       @id @default(uuid()) @db.Uuid
+  businessId       String       @map("business_id") @db.Uuid
+  loyaltyProgramId String       @map("loyalty_program_id") @db.Uuid
+  name             String
+  stampsRequired   Int          @map("stamps_required")
+  description      String?
+  status           RewardStatus
+  createdAt        DateTime     @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt        DateTime     @updatedAt @map("updated_at") @db.Timestamptz(6)
+
+  loyaltyProgram    LoyaltyProgram     @relation(fields: [loyaltyProgramId, businessId], references: [id, businessId])
+  stampTransactions StampTransaction[]
+  rewardRedemptions RewardRedemption[]
+
+  @@unique([id, businessId])
+  @@index([businessId])
+  @@map("rewards")
+}
+
+/// Prisma compound (typed): (stamp_transaction_id, business_id, stamp_transaction_type)
+///   → stamp_transactions (id, business_id, type).
+/// Other tenant composites (reward, enrollment, branch, member) → SQL checklist.
+model RewardRedemption {
+  id                   String                 @id @default(uuid()) @db.Uuid
+  businessId           String                 @map("business_id") @db.Uuid
+  rewardId             String                 @map("reward_id") @db.Uuid
+  customerProgramId    String                 @map("customer_program_id") @db.Uuid
+  branchId             String                 @map("branch_id") @db.Uuid
+  redeemedByMemberId   String                 @map("redeemed_by_member_id") @db.Uuid
+  stampsSubtracted     Int                    @map("stamps_subtracted")
+  balanceAfter         Int                    @map("balance_after")
+  stampTransactionId   String                 @unique @map("stamp_transaction_id") @db.Uuid
+  stampTransactionType StampTransactionType   @default(REDEEM) @map("stamp_transaction_type")
+  idempotencyKey       String                 @map("idempotency_key")
+  requestHash          String                 @map("request_hash")
+  status               RewardRedemptionStatus @default(COMPLETED)
+  createdAt            DateTime               @default(now()) @map("created_at") @db.Timestamptz(6)
+
+  stampTransaction  StampTransaction @relation("RedeemLedgerLink", fields: [stampTransactionId, businessId, stampTransactionType], references: [id, businessId, type])
+  reward            Reward           @relation(fields: [rewardId], references: [id])
+  customerProgram   CustomerProgram  @relation(fields: [customerProgramId], references: [id])
+  branch            Branch           @relation("RedemptionAtBranch", fields: [branchId], references: [id])
+  redeemedByMember  BusinessMember   @relation("RedemptionRedeemedBy", fields: [redeemedByMemberId], references: [id])
+
+  /// Required by Prisma for the typed 1:1 compound relation (also implies UNIQUE stamp_transaction_id).
+  @@unique([stampTransactionId, businessId, stampTransactionType])
+  @@unique([businessId, idempotencyKey])
+  @@index([businessId])
+  @@index([customerProgramId])
+  @@index([rewardId])
+  @@map("reward_redemptions")
+}
+
+// ---------------------------------------------------------------------------
+// Subscriptions
+// ---------------------------------------------------------------------------
+
+model SubscriptionPlan {
+  id                String   @id @default(uuid()) @db.Uuid
+  code              String   @unique
+  name              String
+  /// Enum members not finalized in Phase 0 — keep as TEXT until decided.
+  tier              String
+  priceMonthlyCents Int      @map("price_monthly_cents")
+  maxBranches       Int      @map("max_branches")
+  maxEmployees      Int      @map("max_employees")
+  maxActivePrograms Int      @map("max_active_programs")
+  maxCustomers      Int?     @map("max_customers")
+  featuresJson      Json     @map("features_json")
+  isActive          Boolean  @map("is_active")
+  createdAt         DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt         DateTime @updatedAt @map("updated_at") @db.Timestamptz(6)
+
+  subscriptions Subscription[]
+
+  @@map("subscription_plans")
+}
+
+model Subscription {
+  id                   String             @id @default(uuid()) @db.Uuid
+  businessId           String             @unique @map("business_id") @db.Uuid
+  planId               String             @map("plan_id") @db.Uuid
+  status               SubscriptionStatus
+  currentPeriodStart   DateTime?          @map("current_period_start") @db.Timestamptz(6)
+  currentPeriodEnd     DateTime?          @map("current_period_end") @db.Timestamptz(6)
+  pastDueSince         DateTime?          @map("past_due_since") @db.Timestamptz(6)
+  /// Grace duration TBD — column only; do not invent default length.
+  gracePeriodEndsAt    DateTime?          @map("grace_period_ends_at") @db.Timestamptz(6)
+  addOnBranches        Int                @default(0) @map("add_on_branches")
+  stripeCustomerId     String?            @map("stripe_customer_id")
+  stripeSubscriptionId String?            @map("stripe_subscription_id")
+  createdAt            DateTime           @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt            DateTime           @updatedAt @map("updated_at") @db.Timestamptz(6)
+
+  business Business         @relation(fields: [businessId], references: [id])
+  plan     SubscriptionPlan @relation(fields: [planId], references: [id])
+
+  @@index([planId])
+  @@map("subscriptions")
+}
